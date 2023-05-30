@@ -1,0 +1,2460 @@
+,commit_message,files_changed,lines_inserted,lines_deleted,target,Imports added,Imports deleted,file_new,file_past
+0,"Merge branch 'master' into 'update-package-versions-2'
+
+# Conflicts:
+#   README.md",9.0,174,21,1.0,14.0,0.0,"import os
+import subprocess
+
+
+class FFMPEGFrames:
+
+    def __init__(self, output):
+        self.output = output
+
+    def extract_frames(self, input, fps):
+        self.output = input.split('/')[-1].split('.')[0]
+
+        if not os.path.exists(self.output):
+            os.makedirs(self.output)
+
+        query = ""ffmpeg -i "" + input + "" -vf fps="" + \
+            str(fps) + "" "" + self.output + ""/output%02d.png""
+        response = subprocess.Popen(
+            query, shell=True, stdout=subprocess.PIPE).stdout.read()
+        s = str(response).encode('utf-8')
+
+;
+# coding: utf-8
+
+# ### Функции пред- и постобработки
+
+# In[1]:
+
+
+from pydub import AudioSegment
+from scipy.io import wavfile
+import os
+import numpy as np
+import speech_recognition as sr
+import argparse
+
+
+
+parser = argparse.ArgumentParser(description='wav_to_txt')
+parser.add_argument('wav_path', help='Path to .wav audio file')
+parser.add_argument('out_path', help='Path to output .txt file')
+# Делим аудио (wav) на короткие части, сохраняем в папку tmp_slices
+
+# In[2]:
+
+
+
+
+def divide_audio(audio_src, slice_length_ms=3000, overlap_ms=500):
+    audio = AudioSegment.from_file(audio_src, ""wav"")
+
+    slices = np.arange(0, len(audio) - overlap_ms, slice_length_ms - overlap_ms)
+
+    path = ""tmp_slices""
+    os.mkdir(path)
+    audio_slices_src = []
+    i = 0
+
+    for start, end in zip(slices[:-1], slices[1:]):
+        slice_ = audio[start: end + overlap_ms]
+        # сохраняем кусочки аудио
+        slice_name = ""tmp_slices\slice{0}.wav"".format(i)
+        audio_slices_src.append(slice_name)
+        slice_.export(slice_name, format=""wav"")
+        i += 1
+
+    if len(audio) - end > overlap_ms:
+        slice_ = audio[end: len(audio)]
+        slice_name = ""tmp_slices\slice{0}.wav"".format(i)
+        audio_slices_src.append(slice_name)
+        slice_.export(slice_name, format=""wav"")
+
+    return audio_slices_src
+
+
+# Удаляем папку tmp_slices с частями аудио
+
+# In[3]:
+
+
+def delete_tmp_slices(audio_slices_src):
+    for slice_ in audio_slices_src:
+        os.remove(slice_)
+    os.rmdir('tmp_slices')
+
+
+# Соединяем распознанный по частям текст
+
+# In[4]:
+
+
+def combine_text(text_array):
+    result_text = ''
+
+    prev_splited = []
+
+    for text in text_array:
+        processed_text = ''
+
+        splited = text.lower().split()
+
+        j = 0
+        while j < min(len(splited), len(prev_splited)):
+            if splited[j] != prev_splited[-1 - j]:
+                break
+            j += 1
+
+        for i in range(j, len(splited)):
+            processed_text += splited[i] + ' '
+
+        result_text += processed_text
+
+        prev_splited = splited
+
+    return result_text
+
+
+# ### Распознавание речи
+
+# Библиотека SpeechRecognition ( https://pypi.org/project/SpeechRecognition/ )
+# 
+# Используется распознавание при помощи Google Speech Recognition
+# 
+# Распознавание текста происходит непрерывно, даже когда речи нет, а есть только шум. Если распознать какие-то слова не удается, программа выдает ошибку. Поэтому нужно делить аудио на короткие части и распознавать их отдельно.
+# 
+# Список языковых кодов для Google Speech Recognition: https://www.science.co.il/language/Locale-codes.php
+
+# In[5]:
+
+
+# Распознавание без учета шума
+
+# In[6]:
+
+
+def recognize_no_noise(audio_src):
+    r = sr.Recognizer()
+
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        # print('analyzing ', chunk_src)
+        with a as source:
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            # print('!',text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+
+    # удаляем ненужные файлы
+    delete_tmp_slices(chunks_src)
+
+    return text
+
+
+# In[7]:
+
+
+# print(recognize_no_noise('audio/test1.wav'))
+
+
+# Распознавание с учетом шума: уровень шума определяется автоматически
+
+# In[8]:
+
+
+def recognize_with_noise(audio_src):
+    r = sr.Recognizer()
+
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        # print('analyzing ', chunk_src)
+        with a as source:
+            r.adjust_for_ambient_noise(source)  # учитываем шум
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            # print(text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_slices(chunks_src)
+
+    return text
+
+
+# In[9]:
+
+
+# print(recognize_with_noise('audio/test1.wav'))
+
+
+# Итоговая функция распознавания, в которой выбирается наилучший вариант распознавания
+
+# In[10]:
+
+
+def wav_to_txt(audio_src, out_txt_src):
+    print(f""Speech recognition started"")
+    no_noise_txt = recognize_no_noise(audio_src)
+    noise_txt = recognize_with_noise(audio_src)
+
+    text = no_noise_txt
+    if len(noise_txt.split()) > len(text.split()):
+        text = noise_txt
+
+    # записываем в файл
+    out = open(out_txt_src, 'a')
+    out.write(text)
+    out.close()
+    print(f""Speech recognition finished"")
+
+
+# Для интеграции в main
+
+# In[12]:
+
+
+# wav_to_txt('audio/test1.wav', 'TEXT.txt')
+
+
+# In[ ]:
+
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    wav_to_txt(args.wav_path, args.out_path)
+
+;
+# Import libraries
+# from PIL import Image хуже распознается
+import cv2 
+import pytesseract 
+import sys 
+import os 
+import argparse
+
+
+parser = argparse.ArgumentParser(description='OCR')
+parser.add_argument('in_filenames', help='Input filenames')
+parser.add_argument('out_filename', help='Output filename')
+
+def Pic2Txt(listImg, outfile):
+
+	f = open(outfile, ""a"") 
+	# Iterate through all the image
+	for img in listImg: 
+
+		# Recognize the text as string in image using pytesserct
+		text = str(((pytesseract.image_to_string(cv2.imread(img),lang = 'eng+rus'))))
+
+		# The recognized text is stored in variable text 
+		# Any string processing may be applied on text 
+		# Here, basic formatting has been done: 
+		# In many PDFs, at line ending, if a word can't 
+		# be written fully, a 'hyphen' is added. 
+		# The rest of the word is written in the next line 
+		# Eg: This is a sample text this word here GeeksF- 
+		# orGeeks is half on first line, remaining on next. 
+		# To remove this, we replace every '-\n' to ''. 
+		text = text.replace('-\n', '')	 
+
+		# Finally, write the processed text to the file. 
+		#with open(fname, ""w"", encoding=""utf-8"") as f:
+		f.write(text) 
+
+	# Close the file after writing all the text. 
+	f.close() 
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    Pic2Txt(args.in_filenames.split(','), args.out_filename)
+;
+# -*- coding: utf-8 -*-
+
+from test import Hello
+import argparse
+import sys
+import socket
+from TextFromPicture import Pic2Txt
+import FFMPEGFrames
+import glob
+from SpeechRecognition import wav_to_txt
+import video_to_audio
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    error_msg = ""Invalid Arguments\n\n"" \
+                ""Commands: \n"" \
+                ""  -t, --test                 Let's test it!\n"" \
+                ""       Optional: --name='your_arg'  -   that'll print your string your_arg\n"" \
+                ""  -v, --video             Convert video to pictures and then convert to text\n"" \
+                ""       Mandatory: --in_filename='files/video.mp4' --out_filename='output.txt'  --fps='1'-  set input video, output file, frames per second ""
+
+    if len(sys.argv) == 1:
+        print(error_msg)
+
+    elif str(sys.argv[1]) in ['-t', '--test']:
+        parser.add_argument('-t', '--test', action='store_true')
+        parser.add_argument(""--name"", default=socket.gethostname())
+
+        args = parser.parse_args()
+
+        test_class = Hello(args.name)
+        test_class.print_hello()
+    elif str(sys.argv[1]) in ['-v', '--video']:
+        parser.add_argument('-v', '--video', action='store_true')
+        parser.add_argument(""in_filename"", help='Input filename')
+        parser.add_argument('out_filename', help='Output filename')
+        parser.add_argument(""fps"", help='fps')
+        args = vars(parser.parse_args())
+
+        input = args[""in_filename""]
+        output = args[""out_filename""]
+        fps = args[""fps""]
+
+        f = FFMPEGFrames.FFMPEGFrames(""images/"")
+        f.extract_frames(input, fps)
+        Pic2Txt(glob.glob(f.output + ""/*.png""), output)
+    elif str(sys.argv[1] in ['-a', '--audio']):
+        parser.add_argument('-a', '--audio', action='store_true')
+        parser.add_argument(""in_filename"", help='Input filename')
+        parser.add_argument('out_filename', help='Output filename')
+        args = vars(parser.parse_args())
+
+        input = args[""in_filename""]
+        output = args[""out_filename""]
+
+        f = video_to_audio.video_to_audio(""/WAVs"")
+        f.video_to_wav(input)
+        wav_to_txt(f.output, output)
+
+    else:
+        print(error_msg)
+
+
+if __name__ == '__main__':
+    main()
+
+;
+import subprocess
+import argparse
+import os
+
+parser = argparse.ArgumentParser(description='mp3_to_wav')
+parser.add_argument('in_mp3', help='Input .mp3 file')
+
+def mp3_to_wav(mp3_path):
+    wavs_path = ""WAVs""
+    wav_path = wavs_path + ""/output.wav""
+    if not os.path.exists(wavs_path):
+        os.mkdir(wavs_path)
+
+    subprocess.run([""ffmpeg"",
+                ""-loglevel"",
+                ""quiet"",
+                ""-hide_banner"",
+                ""-y"",
+                ""-i"",
+                mp3_path,
+                ""-write_id3v1"",
+                ""1"",
+                ""-id3v2_version"",
+                ""3"",
+                ""-q:a"",
+                ""0"",
+                ""-map"",
+                ""a"",
+                wav_path],
+               stderr=subprocess.DEVNULL,
+               stdout=subprocess.DEVNULL,
+               stdin=subprocess.PIPE)
+
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    mp3_to_wav(args.in_mp3)
+;
+'''конвертация видеофайлов различных форматов в mp3'''
+
+import os
+import sys
+import subprocess
+from multiprocessing.pool import ThreadPool
+from multiprocessing import cpu_count
+import time
+import datetime
+
+def videotomp3(task):
+    '''запускает новый подпроцесс ffmpeg, используя pipe и сохраняет файлы в формате mp3 в ту жу директорию, где хранятся оригинальные файлы '''
+    root_path = task[0]
+    filename = task[1]
+    full_path = os.path.join(root_path, filename)
+    new_filename = os.path.splitext(filename)[0] +"".mp3""
+    new_path = os.path.join(root_path,
+                            os.path.basename(root_path) + ""-"" + FOLDER_NAME,
+                            new_filename)
+
+    completed = subprocess.run([""ffmpeg"",
+                                ""-loglevel"",
+                                ""quiet"",
+                                ""-hide_banner"",
+                                ""-y"",
+                                ""-i"",
+                                full_path,
+                                ""-write_id3v1"",
+                                ""1"",
+                                ""-id3v2_version"",
+                                ""3"",
+                                ""-q:a"",
+                                ""0"",
+                                ""-map"",
+                                ""a"",
+                                new_path],
+                               stderr=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL,
+                               stdin=subprocess.PIPE)
+    #Если не предоставить pipe каналу stdin, то ffmpeg не закроется корректно
+    #при конвертировании нескольких файлов и будет необходимо перезагрузить
+    #терминал после авершения выполнения этого скрипта
+    #удалить исходные файлы после их конвертации
+    #if completed.returncode == 0:
+        #subprocess.call([""rm"", full_path]) # удаляет исходный файл после конвертации
+    print(f""'{new_path}' - return code {completed.returncode}"")
+    if completed.returncode != 0:
+        completed.timestamp = datetime.datetime.now().ctime()
+    return completed
+
+if __name__ == ""__main__"":
+    FOLDERS = []
+    FOLDER_NAME = ""MP3s""
+    AUDIO_FILE_TYPES = (""webm"",
+                        ""mpeg"",
+                        ""ogg"",
+                        ""mp4"",
+                        ""m4p"",
+                        ""m4v"",
+                        ""avi"",
+                        ""wmv"",
+                        ""mov"",
+                        ""flv"")
+    STARTTIME = time.time()
+    #get all of the source audio filenames
+    for root, dirs, files in os.walk(os.getcwd()):
+        source_audio_filenames = []
+        for file in files:
+            if file.endswith(AUDIO_FILE_TYPES):
+                source_audio_filenames.append((root, file))
+        FOLDERS.append((root, source_audio_filenames))
+
+    with ThreadPool(cpu_count())as p:
+        PROCESSES = []
+        for Folder in FOLDERS:
+            try:
+                #Stop directories being created within the output directories
+                if FOLDER_NAME in Folder[0]:
+                    continue
+                NewFolderName = os.path.basename(Folder[0]) + ""-"" + FOLDER_NAME
+                os.mkdir(os.path.join(Folder[0], NewFolderName))
+            except FileExistsError:
+                pass
+            PROCESSES += Folder[1]
+        print(f""Transcoding {len(PROCESSES)} Audio files"")
+        JOBS = p.map(converttomp3, PROCESSES)
+        FAILED_JOBS = []
+        for job in JOBS:
+            if job.returncode != 0:
+                FAILED_JOBS.append(job)
+        MESSAGE = (f""Transcode Finished! \r {len(PROCESSES)-len(FAILED_JOBS)}/{len(PROCESSES)} ""
+                   f""Audio files transcoded in \r{time.time() - STARTTIME:.4f} seconds"")
+        subprocess.run([""notify-send"", ""--urgency=low"", MESSAGE])
+        if len(FAILED_JOBS) > 0:       
+            with open(""nautilus-transcode.log"", 'a+') as f:
+                for failedJob in FAILED_JOBS:
+                    f.write(f""{failedJob.timestamp} args:{failedJob.args}""
+                            f""return code:{failedJob.returncode}\n"")
+
+    print(""Done"")
+    sys.exit(0)
+
+
+
+;
+import subprocess
+import argparse
+import os
+
+parser = argparse.ArgumentParser(description='video2mp3')
+parser.add_argument('video_path', help='Path to video file')
+
+
+def video2mp3(video_path):
+    mp3s_path = ""mp3s""
+    mp3_path = mp3s_path + ""/output.mp3""
+    if not os.path.exists(mp3s_path):
+        os.mkdir(mp3s_path)
+
+    subprocess.run([""ffmpeg"",
+                ""-loglevel"",
+                ""quiet"",
+                ""-hide_banner"",
+                ""-y"",
+                ""-i"",
+                video_path,
+                ""-write_id3v1"",
+                ""1"",
+                ""-id3v2_version"",
+                ""3"",
+                ""-q:a"",
+                ""0"",
+                ""-map"",
+                ""a"",
+                mp3_path],
+               stderr=subprocess.DEVNULL,
+               stdout=subprocess.DEVNULL,
+               stdin=subprocess.PIPE)
+
+
+if __name__ == '__main__':
+    #path = ""files/videoplayback.mp4""
+    #video2mp3(path)
+    args = parser.parse_args()
+    video2mp3(args.video_path)
+
+;
+import subprocess
+import argparse
+import os
+import time
+
+parser = argparse.ArgumentParser(description='video_to_wav')
+parser.add_argument('video_path', help='Path to video file')
+
+
+class video_to_audio:
+
+    def __init__(self, output):
+        self.output = output
+
+    def video_to_wav(self, video_path):
+        wavs_path = ""WAVs""
+        name = video_path.split('/')[-1].split('.')[0]
+        self.output = wavs_path + ""/"" + name + "".wav""
+        if not os.path.exists(wavs_path):
+            os.mkdir(wavs_path)
+            print(f""Directory created"")
+
+        subprocess.run([""ffmpeg"",
+                ""-loglevel"",
+                ""debug"",
+                ""-hide_banner"",
+                ""-y"",
+                ""-i"",
+                video_path,
+                ""-vn"",
+                ""-sn"",
+                ""-ar"",
+                ""44100"",
+                ""-q:a"",
+                ""0"",
+                ""-map"",
+                ""a"",
+                self.output],
+               stderr=subprocess.DEVNULL,
+               stdout=subprocess.DEVNULL,
+               stdin=subprocess.PIPE)
+
+        print(f""Convertation to .wav finished!"")
+
+
+#if __name__ == '__main__':
+    #path = ""files/videoplayback.mp4""
+    #video_to_wav(path)
+    #args = parser.parse_args()
+    #video_to_wav(args.video_path)
+
+
+    def video2mp3(self, video_path):
+        mp3s_path = ""mp3s""
+        name = video_path.split('/')[-1].split('.')[0]
+        self.output = mp3s_path + ""/"" + name + "".mp3""
+        if not os.path.exists(mp3s_path):
+            os.mkdir(mp3s_path)
+            print(f""Directory created"")
+
+        subprocess.run([""ffmpeg"",
+                ""-loglevel"",
+                ""debug"",
+                ""-hide_banner"",
+                ""-y"",
+                ""-i"",
+                video_path,
+                ""-write_id3v1"",
+                ""1"",
+                ""-id3v2_version"",
+                ""3"",
+                ""-q:a"",
+                ""0"",
+                ""-map"",
+                ""a"",
+                self.output],
+               stderr=subprocess.DEVNULL,
+               stdout=subprocess.DEVNULL,
+               stdin=subprocess.PIPE)
+
+        print(f""Convertation to .mp3 finished!"")
+;
+","import os
+import subprocess
+
+
+class FFMPEGFrames:
+
+    def __init__(self, output):
+        self.output = output
+
+    def extract_frames(self, input, fps):
+        self.output = input.split('/')[-1].split('.')[0]
+
+        if not os.path.exists(self.output):
+            os.makedirs(self.output)
+
+        query = ""ffmpeg -i "" + input + "" -vf fps="" + \
+            str(fps) + "" "" + self.output + ""output%02d.png""
+        response = subprocess.Popen(
+            query, shell=True, stdout=subprocess.PIPE).stdout.read()
+        s = str(response).encode('utf-8')
+
+;
+
+# coding: utf-8
+
+# ### Функции пред- и постобработки
+
+# In[1]:
+
+
+from pydub import AudioSegment
+from scipy.io import wavfile
+import os
+import numpy as np
+
+
+# Делим аудио (wav) на короткие части, сохраняем в папку tmp_slices
+
+# In[2]:
+
+
+def divide_audio(audio_src, slice_length_ms=3000, overlap_ms=500):
+    audio = AudioSegment.from_file(audio_src, ""wav"")
+
+    slices = np.arange(0, len(audio)-overlap_ms, slice_length_ms-overlap_ms)
+    
+    path = ""tmp_slices""
+    os.mkdir(path)
+    audio_slices_src = []
+    i = 0
+    
+    for start, end in zip(slices[:-1], slices[1:]):
+        slice_ = audio[start : end+overlap_ms]
+        # сохраняем кусочки аудио
+        slice_name = ""tmp_slices\slice{0}.wav"".format(i)
+        audio_slices_src.append(slice_name)
+        slice_.export(slice_name, format=""wav"")
+        i+=1
+        
+    if len(audio) - end > overlap_ms:
+        slice_ = audio[end : len(audio)]
+        slice_name = ""tmp_slices\slice{0}.wav"".format(i)
+        audio_slices_src.append(slice_name)
+        slice_.export(slice_name, format=""wav"")
+        
+    return audio_slices_src
+
+
+# Удаляем папку tmp_slices с частями аудио
+
+# In[3]:
+
+
+def delete_tmp_slices(audio_slices_src):
+    for slice_ in audio_slices_src:
+        os.remove(slice_)
+    os.rmdir('tmp_slices')
+
+
+# Соединяем распознанный по частям текст
+
+# In[4]:
+
+
+def combine_text(text_array):
+    result_text = ''
+    
+    prev_splited = []
+    
+    for text in text_array:
+        processed_text = ''
+        
+        splited = text.lower().split()
+        
+        j = 0
+        while j < min(len(splited), len(prev_splited)):
+            if splited[j] != prev_splited[-1-j]:
+                break
+            j += 1
+        
+        for i in range(j, len(splited)):
+            processed_text += splited[i] + ' '
+        
+        result_text += processed_text
+        
+        prev_splited = splited        
+        
+    return result_text
+
+
+# ### Распознавание речи
+
+# Библиотека SpeechRecognition ( https://pypi.org/project/SpeechRecognition/ )
+# 
+# Используется распознавание при помощи Google Speech Recognition
+# 
+# Распознавание текста происходит непрерывно, даже когда речи нет, а есть только шум. Если распознать какие-то слова не удается, программа выдает ошибку. Поэтому нужно делить аудио на короткие части и распознавать их отдельно.
+# 
+# Список языковых кодов для Google Speech Recognition: https://www.science.co.il/language/Locale-codes.php
+
+# In[5]:
+
+
+import speech_recognition as sr
+
+
+# Распознавание без учета шума
+
+# In[6]:
+
+
+def recognize_no_noise(audio_src):
+    r = sr.Recognizer()
+    
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        #print('analyzing ', chunk_src)
+        with a as source:
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            #print('!',text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    
+    # удаляем ненужные файлы
+    delete_tmp_slices(chunks_src)
+    
+    return text
+
+
+# In[7]:
+
+
+#print(recognize_no_noise('audio/test1.wav'))
+
+
+# Распознавание с учетом шума: уровень шума определяется автоматически
+
+# In[8]:
+
+
+def recognize_with_noise(audio_src):
+    r = sr.Recognizer()
+    
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        #print('analyzing ', chunk_src)
+        with a as source:
+            r.adjust_for_ambient_noise(source) # учитываем шум
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            #print(text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_slices(chunks_src)
+    
+    return text
+
+
+# In[9]:
+
+
+#print(recognize_with_noise('audio/test1.wav'))
+
+
+# Итоговая функция распознавания, в которой выбирается наилучший вариант распознавания
+
+# In[10]:
+
+
+def wav_to_txt(audio_src, out_txt_src):
+    
+    no_noise_txt = recognize_no_noise(audio_src)
+    noise_txt = recognize_with_noise(audio_src)
+    
+    text = no_noise_txt
+    if len(noise_txt.split()) > len(text.split()):
+        text = noise_txt
+        
+    # записываем в файл
+    out = open(out_txt_src, 'a')
+    out.write(text)
+    out.close()
+
+
+# Для интеграции в main
+
+# In[12]:
+
+
+#wav_to_txt('audio/test1.wav', 'TEXT.txt')
+
+
+# In[ ]:
+
+
+parser = argparse.ArgumentParser(description='wav_to_txt')
+parser.add_argument('wav_path', help='Path to .wav audio file')
+parser.add_argument('out_path', help='Path to output .txt file')
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    wav_to_txt(args.wav_path, args.out_path)
+
+
+;
+<<<<<<< HEAD:SpeechRecognition_2_mp3_to_text.py
+# -*- coding: utf-8 -*-
+=======
+# coding: utf-8
+>>>>>>> origin/KateShestakova:SpeechRecognition_mp3_to_text.py
+
+# ### Функции пред- и постобработки
+
+from pydub import AudioSegment
+from pydub.utils import make_chunks
+import os
+
+import speech_recognition as sr
+
+# Перевод из формата mp3 в wav
+
+def mp3_to_wav(mp3_src, wav_src):
+    sound = AudioSegment.from_mp3(mp3_src)
+    sound.export(wav_src, format=""wav"")
+
+# Делим аудио (wav) на короткие части, сохраняем в папку tmp_chunks
+
+def divide_audio(audio_src, chunk_length_ms):
+    audio = AudioSegment.from_file(audio_src, ""wav"") 
+    chunks = make_chunks(audio, chunk_length_ms)
+    
+    path = ""tmp_chunks""
+    os.mkdir(path)
+    
+    chunks_src = []
+    for i, chunk in enumerate(chunks):
+        chunk_name = ""tmp_chunks\chunk{0}.wav"".format(i)
+        chunks_src.append(chunk_name)
+        chunk.export(chunk_name, format=""wav"")
+        
+    return chunks_src
+
+
+# Удаляем папку tmp_chunks с частями аудио
+
+def delete_tmp_chunks(chunks_src):
+    for chunk in chunks_src:
+        os.remove(chunk)
+    os.rmdir('tmp_chunks')
+
+# Соединяем распознанный по частям текст
+
+def combine_text(text_array):
+    result_text = ''
+    for text in text_array:
+        result_text += text + ' '
+    return result_text
+
+
+# ### Распознавание речи
+
+# Библиотека SpeechRecognition ( https://pypi.org/project/SpeechRecognition/ )
+# 
+# Используется распознавание при помощи Google Speech Recognition
+# 
+# Распознавание текста происходит непрерывно, даже когда речи нет, а есть только шум. Если распознать какие-то слова не удается, программа выдает ошибку. Поэтому нужно делить аудио на короткие части и распознавать их отдельно.
+# 
+# Список языковых кодов для Google Speech Recognition: https://www.science.co.il/language/Locale-codes.php
+
+
+# Распознавание без учета шума
+
+def recognize(audio_src):
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src, 3000)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        with a as source:
+            audio = r.record(source)
+        try:
+            text_array.append(r.recognize_google(audio, language='ru'))
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_chunks(chunks_src)
+    
+    return text
+
+# Распознавание с учетом шума: уровень шума определяется автоматически
+
+def recognize_with_noise(audio_src):
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src, 3000)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        with a as source:
+            r.adjust_for_ambient_noise(source) # учитываем шум
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            #print(text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_chunks(chunks_src)
+    
+    return text
+
+# итоговая функция распознавания
+
+def wav_to_txt(path):
+    r = sr.Recognizer()
+    recognize_with_noise(path)
+    
+# для интеграции в main
+
+parser = argparse.ArgumentParser(description='wav_to_txt')
+parser.add_argument('wav_path', help='Path to .wav audio file')
+parser.add_argument('out_path', help='Path to output text file')
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    txt = wav_to_txt(args.wav_path)
+    
+    f = open(args.out_path, ""a"")
+    f.write(txt) 
+    f.close() 
+
+
+;
+# Import libraries
+# from PIL import Image хуже распознается
+import cv2 
+import pytesseract 
+import sys 
+import os 
+import argparse
+
+parser = argparse.ArgumentParser(description='OCR')
+parser.add_argument('in_filenames', help='Input filenames')
+parser.add_argument('out_filename', help='Output filename')
+
+def Pic2Txt(listImg, outfile):
+
+	f = open(outfile, ""a"") 
+	# Iterate through all the image
+	for img in listImg: 
+
+		# Recognize the text as string in image using pytesserct 
+		text = str(((pytesseract.image_to_string(cv2.imread(img),lang = 'eng+rus')))) 
+
+		# The recognized text is stored in variable text 
+		# Any string processing may be applied on text 
+		# Here, basic formatting has been done: 
+		# In many PDFs, at line ending, if a word can't 
+		# be written fully, a 'hyphen' is added. 
+		# The rest of the word is written in the next line 
+		# Eg: This is a sample text this word here GeeksF- 
+		# orGeeks is half on first line, remaining on next. 
+		# To remove this, we replace every '-\n' to ''. 
+		text = text.replace('-\n', '')	 
+
+		# Finally, write the processed text to the file. 
+		#with open(fname, ""w"", encoding=""utf-8"") as f:
+		f.write(text) 
+
+	# Close the file after writing all the text. 
+	f.close() 
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    Pic2Txt(args.in_filenames.split(','), args.out_filename)
+;
+# -*- coding: utf-8 -*-
+
+from test import Hello
+import argparse
+import sys
+import socket
+from TextFromPicture import Pic2Txt
+import FFMPEGFrames
+import glob
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    error_msg = ""Invalid Arguments\n\n"" \
+                ""Commands: \n"" \
+                ""  -t, --test                 Let's test it!\n"" \
+                ""       Optional: --name='your_arg'  -   that'll print your string your_arg\n"" \
+                ""  -v, --video             Convert video to pictures and then convert to text\n"" \
+                ""       Mandatory: --in_filename='files/video.mp4' --out_filename='output.txt'  --fps='1'-  set input video, output file, frames per second ""
+
+    if len(sys.argv) == 1:
+        print(error_msg)
+
+    elif str(sys.argv[1]) in ['-t', '--test']:
+        parser.add_argument('-t', '--test', action='store_true')
+        parser.add_argument(""--name"", default=socket.gethostname())
+
+        args = parser.parse_args()
+
+        test_class = Hello(args.name)
+        test_class.print_hello()
+    elif str(sys.argv[1]) in ['-v', '--video']:
+        parser.add_argument('-v', '--video', action='store_true')
+        parser.add_argument(""in_filename"", help='Input filename')
+        parser.add_argument('out_filename', help='Output filename')
+        parser.add_argument(""fps"", help='fps')
+        args = vars(parser.parse_args())
+
+        input = args[""in_filename""]
+        output = args[""out_filename""]
+        fps = args[""fps""]
+
+        f = FFMPEGFrames.FFMPEGFrames(""images/"")
+        f.extract_frames(input, fps)
+        Pic2Txt(glob.glob(""images/*.png""), output)
+    else:
+        print(error_msg)
+
+
+if __name__ == '__main__':
+    main()
+
+;
+'''конвертация видеофайлов различных форматов в mp3'''
+
+import os
+import sys
+import subprocess
+from multiprocessing.pool import ThreadPool
+from multiprocessing import cpu_count
+import time
+import datetime
+
+def videotomp3(task):
+    '''запускает новый подпроцесс ffmpeg, используя pipe и сохраняет файлы в формате mp3 в ту жу директорию, где хранятся оригинальные файлы '''
+    root_path = task[0]
+    filename = task[1]
+    full_path = os.path.join(root_path, filename)
+    new_filename = os.path.splitext(filename)[0] +"".mp3""
+    new_path = os.path.join(root_path,
+                            os.path.basename(root_path) + ""-"" + FOLDER_NAME,
+                            new_filename)
+
+    completed = subprocess.run([""ffmpeg"",
+                                ""-loglevel"",
+                                ""quiet"",
+                                ""-hide_banner"",
+                                ""-y"",
+                                ""-i"",
+                                full_path,
+                                ""-write_id3v1"",
+                                ""1"",
+                                ""-id3v2_version"",
+                                ""3"",
+                                ""-q:a"",
+                                ""0"",
+                                ""-map"",
+                                ""a"",
+                                new_path],
+                               stderr=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL,
+                               stdin=subprocess.PIPE)
+    #Если не предоставить pipe каналу stdin, то ffmpeg не закроется корректно
+    #при конвертировании нескольких файлов и будет необходимо перезагрузить
+    #терминал после авершения выполнения этого скрипта
+    #удалить исходные файлы после их конвертации
+    #if completed.returncode == 0:
+        #subprocess.call([""rm"", full_path]) # удаляет исходный файл после конвертации
+    print(f""'{new_path}' - return code {completed.returncode}"")
+    if completed.returncode != 0:
+        completed.timestamp = datetime.datetime.now().ctime()
+    return completed
+
+if __name__ == ""__main__"":
+    FOLDERS = []
+    FOLDER_NAME = ""MP3s""
+    AUDIO_FILE_TYPES = (""webm"",
+                        ""mpeg"",
+                        ""ogg"",
+                        ""mp4"",
+                        ""m4p"",
+                        ""m4v"",
+                        ""avi"",
+                        ""wmv"",
+                        ""mov"",
+                        ""flv"")
+    STARTTIME = time.time()
+    #get all of the source audio filenames
+    for root, dirs, files in os.walk(os.getcwd()):
+        source_audio_filenames = []
+        for file in files:
+            if file.endswith(AUDIO_FILE_TYPES):
+                source_audio_filenames.append((root, file))
+        FOLDERS.append((root, source_audio_filenames))
+
+    with ThreadPool(cpu_count())as p:
+        PROCESSES = []
+        for Folder in FOLDERS:
+            try:
+                #Stop directories being created within the output directories
+                if FOLDER_NAME in Folder[0]:
+                    continue
+                NewFolderName = os.path.basename(Folder[0]) + ""-"" + FOLDER_NAME
+                os.mkdir(os.path.join(Folder[0], NewFolderName))
+            except FileExistsError:
+                pass
+            PROCESSES += Folder[1]
+        print(f""Transcoding {len(PROCESSES)} Audio files"")
+        JOBS = p.map(converttomp3, PROCESSES)
+        FAILED_JOBS = []
+        for job in JOBS:
+            if job.returncode != 0:
+                FAILED_JOBS.append(job)
+        MESSAGE = (f""Transcode Finished! \r {len(PROCESSES)-len(FAILED_JOBS)}/{len(PROCESSES)} ""
+                   f""Audio files transcoded in \r{time.time() - STARTTIME:.4f} seconds"")
+        subprocess.run([""notify-send"", ""--urgency=low"", MESSAGE])
+        if len(FAILED_JOBS) > 0:       
+            with open(""nautilus-transcode.log"", 'a+') as f:
+                for failedJob in FAILED_JOBS:
+                    f.write(f""{failedJob.timestamp} args:{failedJob.args}""
+                            f""return code:{failedJob.returncode}\n"")
+
+    print(""Done"")
+    sys.exit(0)
+
+
+
+;
+"
+1,"updated package versions and first install script
+",5.0,41,30,0.0,3.0,1.0,"# coding: utf-8
+
+# ### Функции пред- и постобработки
+
+# In[1]:
+
+
+from pydub import AudioSegment
+from scipy.io import wavfile
+import os
+import numpy as np
+import speech_recognition as sr
+import argparse
+
+parser = argparse.ArgumentParser(description=""wav_to_txt"")
+parser.add_argument(""wav_path"", help=""Path to .wav audio file"")
+parser.add_argument(""out_path"", help=""Path to output .txt file"")
+# Делим аудио (wav) на короткие части, сохраняем в папку tmp_slices
+
+# In[2]:
+
+
+def divide_audio(audio_src, slice_length_ms=3000, overlap_ms=500):
+    audio = AudioSegment.from_file(audio_src, ""wav"")
+
+    slices = np.arange(0, len(audio) - overlap_ms, slice_length_ms - overlap_ms)
+
+    path = ""tmp_slices""
+    os.mkdir(path)
+    audio_slices_src = []
+    i = 0
+
+    for start, end in zip(slices[:-1], slices[1:]):
+        slice_ = audio[start : end + overlap_ms]
+        # сохраняем кусочки аудио
+        slice_name = ""tmp_slices\slice{0}.wav"".format(i)
+        audio_slices_src.append(slice_name)
+        slice_.export(slice_name, format=""wav"")
+        i += 1
+
+    if len(audio) - end > overlap_ms:
+        slice_ = audio[end : len(audio)]
+        slice_name = ""tmp_slices\slice{0}.wav"".format(i)
+        audio_slices_src.append(slice_name)
+        slice_.export(slice_name, format=""wav"")
+
+    return audio_slices_src
+
+
+# Удаляем папку tmp_slices с частями аудио
+
+# In[3]:
+
+
+def delete_tmp_slices(audio_slices_src):
+    for slice_ in audio_slices_src:
+        os.remove(slice_)
+    os.rmdir(""tmp_slices"")
+
+
+# Соединяем распознанный по частям текст
+
+# In[4]:
+
+
+def combine_text(text_array):
+    result_text = """"
+
+    prev_splited = []
+
+    for text in text_array:
+        processed_text = """"
+
+        splited = text.lower().split()
+
+        j = 0
+        while j < min(len(splited), len(prev_splited)):
+            if splited[j] != prev_splited[-1 - j]:
+                break
+            j += 1
+
+        for i in range(j, len(splited)):
+            processed_text += splited[i] + "" ""
+
+        result_text += processed_text
+
+        prev_splited = splited
+
+    return result_text
+
+
+# ### Распознавание речи
+
+# Библиотека SpeechRecognition ( https://pypi.org/project/SpeechRecognition/ )
+#
+# Используется распознавание при помощи Google Speech Recognition
+#
+# Распознавание текста происходит непрерывно, даже когда речи нет, а есть только шум. Если распознать какие-то слова не удается, программа выдает ошибку. Поэтому нужно делить аудио на короткие части и распознавать их отдельно.
+#
+# Список языковых кодов для Google Speech Recognition: https://www.science.co.il/language/Locale-codes.php
+
+# In[5]:
+
+
+# Распознавание без учета шума
+
+# In[6]:
+
+
+def recognize_no_noise(audio_src):
+    r = sr.Recognizer()
+
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        # print('analyzing ', chunk_src)
+        with a as source:
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language=""ru"")
+            text_array.append(text_chunk)
+            # print('!',text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+
+    # удаляем ненужные файлы
+    delete_tmp_slices(chunks_src)
+
+    return text
+
+
+# In[7]:
+
+
+# print(recognize_no_noise('audio/test1.wav'))
+
+
+# Распознавание с учетом шума: уровень шума определяется автоматически
+
+# In[8]:
+
+
+def recognize_with_noise(audio_src):
+    r = sr.Recognizer()
+
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        # print('analyzing ', chunk_src)
+        with a as source:
+            r.adjust_for_ambient_noise(source)  # учитываем шум
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language=""ru"")
+            text_array.append(text_chunk)
+            # print(text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_slices(chunks_src)
+
+    return text
+
+
+# In[9]:
+
+
+# print(recognize_with_noise('audio/test1.wav'))
+
+
+# Итоговая функция распознавания, в которой выбирается наилучший вариант распознавания
+
+# In[10]:
+
+
+def wav_to_txt(audio_src, out_txt_src):
+    no_noise_txt = recognize_no_noise(audio_src)
+    noise_txt = recognize_with_noise(audio_src)
+
+    text = no_noise_txt
+    if len(noise_txt.split()) > len(text.split()):
+        text = noise_txt
+
+    # записываем в файл
+    out = open(out_txt_src, ""a"")
+    out.write(text)
+    out.close()
+
+
+# Для интеграции в main
+
+# In[12]:
+
+
+# wav_to_txt('audio/test1.wav', 'TEXT.txt')
+
+
+# In[ ]:
+
+if __name__ == ""__main__"":
+    args = parser.parse_args()
+    wav_to_txt(args.wav_path, args.out_path)
+
+;
+# -*- coding: utf-8 -*-
+
+from test import Hello
+import argparse
+import sys
+import socket
+from TextFromPicture import Pic2Txt
+import FFMPEGFrames
+import glob
+
+from SpeechRecognition import wav_to_txt
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    error_msg = ""Invalid Arguments\n\n"" \
+                ""Commands: \n"" \
+                ""  -t, --test                 Let's test it!\n"" \
+                ""       Optional: --name='your_arg'  -   that'll print your string your_arg\n"" \
+                ""  -v, --video             Convert video to pictures and then convert to text\n"" \
+                ""       Mandatory: --in_filename='files/video.mp4' --out_filename='output.txt'  --fps='1'-  set input video, output file, frames per second ""
+
+    if len(sys.argv) == 1:
+        print(error_msg)
+
+    elif str(sys.argv[1]) in ['-t', '--test']:
+        parser.add_argument('-t', '--test', action='store_true')
+        parser.add_argument(""--name"", default=socket.gethostname())
+
+        args = parser.parse_args()
+
+        test_class = Hello(args.name)
+        test_class.print_hello()
+    elif str(sys.argv[1]) in ['-v', '--video']:
+        parser.add_argument('-v', '--video', action='store_true')
+        parser.add_argument(""in_filename"", help='Input filename')
+        parser.add_argument('out_filename', help='Output filename')
+        parser.add_argument(""fps"", help='fps')
+        args = vars(parser.parse_args())
+
+        input = args[""in_filename""]
+        output = args[""out_filename""]
+        fps = args[""fps""]
+
+        f = FFMPEGFrames.FFMPEGFrames(""images/"")
+        f.extract_frames(input, fps)
+        Pic2Txt(glob.glob(""images/*.png""), output)
+    elif str(sys.argv[1] in ['-a', '--audio']):
+        parser.add_argument('-a', '--audio', action='store_true')
+        parser.add_argument(""in_filename"", help='Input filename')
+        parser.add_argument('out_filename', help='Output filename')
+        args = vars(parser.parse_args())
+
+        input = args[""in_filename""]
+        output = args[""out_filename""]
+
+        wav_to_txt(input, output)
+    else:
+        print(error_msg)
+
+
+if __name__ == '__main__':
+    main()
+
+;
+","
+# coding: utf-8
+
+# ### Функции пред- и постобработки
+
+# In[1]:
+
+
+from pydub import AudioSegment
+from scipy.io import wavfile
+import os
+import numpy as np
+
+
+# Делим аудио (wav) на короткие части, сохраняем в папку tmp_slices
+
+# In[2]:
+
+
+def divide_audio(audio_src, slice_length_ms=3000, overlap_ms=500):
+    audio = AudioSegment.from_file(audio_src, ""wav"")
+
+    slices = np.arange(0, len(audio)-overlap_ms, slice_length_ms-overlap_ms)
+    
+    path = ""tmp_slices""
+    os.mkdir(path)
+    audio_slices_src = []
+    i = 0
+    
+    for start, end in zip(slices[:-1], slices[1:]):
+        slice_ = audio[start : end+overlap_ms]
+        # сохраняем кусочки аудио
+        slice_name = ""tmp_slices\slice{0}.wav"".format(i)
+        audio_slices_src.append(slice_name)
+        slice_.export(slice_name, format=""wav"")
+        i+=1
+        
+    if len(audio) - end > overlap_ms:
+        slice_ = audio[end : len(audio)]
+        slice_name = ""tmp_slices\slice{0}.wav"".format(i)
+        audio_slices_src.append(slice_name)
+        slice_.export(slice_name, format=""wav"")
+        
+    return audio_slices_src
+
+
+# Удаляем папку tmp_slices с частями аудио
+
+# In[3]:
+
+
+def delete_tmp_slices(audio_slices_src):
+    for slice_ in audio_slices_src:
+        os.remove(slice_)
+    os.rmdir('tmp_slices')
+
+
+# Соединяем распознанный по частям текст
+
+# In[4]:
+
+
+def combine_text(text_array):
+    result_text = ''
+    
+    prev_splited = []
+    
+    for text in text_array:
+        processed_text = ''
+        
+        splited = text.lower().split()
+        
+        j = 0
+        while j < min(len(splited), len(prev_splited)):
+            if splited[j] != prev_splited[-1-j]:
+                break
+            j += 1
+        
+        for i in range(j, len(splited)):
+            processed_text += splited[i] + ' '
+        
+        result_text += processed_text
+        
+        prev_splited = splited        
+        
+    return result_text
+
+
+# ### Распознавание речи
+
+# Библиотека SpeechRecognition ( https://pypi.org/project/SpeechRecognition/ )
+# 
+# Используется распознавание при помощи Google Speech Recognition
+# 
+# Распознавание текста происходит непрерывно, даже когда речи нет, а есть только шум. Если распознать какие-то слова не удается, программа выдает ошибку. Поэтому нужно делить аудио на короткие части и распознавать их отдельно.
+# 
+# Список языковых кодов для Google Speech Recognition: https://www.science.co.il/language/Locale-codes.php
+
+# In[5]:
+
+
+import speech_recognition as sr
+
+
+# Распознавание без учета шума
+
+# In[6]:
+
+
+def recognize_no_noise(audio_src):
+    r = sr.Recognizer()
+    
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        #print('analyzing ', chunk_src)
+        with a as source:
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            #print('!',text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    
+    # удаляем ненужные файлы
+    delete_tmp_slices(chunks_src)
+    
+    return text
+
+
+# In[7]:
+
+
+#print(recognize_no_noise('audio/test1.wav'))
+
+
+# Распознавание с учетом шума: уровень шума определяется автоматически
+
+# In[8]:
+
+
+def recognize_with_noise(audio_src):
+    r = sr.Recognizer()
+    
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        #print('analyzing ', chunk_src)
+        with a as source:
+            r.adjust_for_ambient_noise(source) # учитываем шум
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            #print(text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_slices(chunks_src)
+    
+    return text
+
+
+# In[9]:
+
+
+#print(recognize_with_noise('audio/test1.wav'))
+
+
+# Итоговая функция распознавания, в которой выбирается наилучший вариант распознавания
+
+# In[10]:
+
+
+def wav_to_txt(audio_src, out_txt_src):
+    
+    no_noise_txt = recognize_no_noise(audio_src)
+    noise_txt = recognize_with_noise(audio_src)
+    
+    text = no_noise_txt
+    if len(noise_txt.split()) > len(text.split()):
+        text = noise_txt
+        
+    # записываем в файл
+    out = open(out_txt_src, 'a')
+    out.write(text)
+    out.close()
+
+
+# Для интеграции в main
+
+# In[12]:
+
+
+#wav_to_txt('audio/test1.wav', 'TEXT.txt')
+
+
+# In[ ]:
+
+
+parser = argparse.ArgumentParser(description='wav_to_txt')
+parser.add_argument('wav_path', help='Path to .wav audio file')
+parser.add_argument('out_path', help='Path to output .txt file')
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    wav_to_txt(args.wav_path, args.out_path)
+
+
+;
+<<<<<<< HEAD:SpeechRecognition_2_mp3_to_text.py
+# -*- coding: utf-8 -*-
+=======
+# coding: utf-8
+>>>>>>> origin/KateShestakova:SpeechRecognition_mp3_to_text.py
+
+# ### Функции пред- и постобработки
+
+from pydub import AudioSegment
+from pydub.utils import make_chunks
+import os
+
+import speech_recognition as sr
+
+# Перевод из формата mp3 в wav
+
+def mp3_to_wav(mp3_src, wav_src):
+    sound = AudioSegment.from_mp3(mp3_src)
+    sound.export(wav_src, format=""wav"")
+
+# Делим аудио (wav) на короткие части, сохраняем в папку tmp_chunks
+
+def divide_audio(audio_src, chunk_length_ms):
+    audio = AudioSegment.from_file(audio_src, ""wav"") 
+    chunks = make_chunks(audio, chunk_length_ms)
+    
+    path = ""tmp_chunks""
+    os.mkdir(path)
+    
+    chunks_src = []
+    for i, chunk in enumerate(chunks):
+        chunk_name = ""tmp_chunks\chunk{0}.wav"".format(i)
+        chunks_src.append(chunk_name)
+        chunk.export(chunk_name, format=""wav"")
+        
+    return chunks_src
+
+
+# Удаляем папку tmp_chunks с частями аудио
+
+def delete_tmp_chunks(chunks_src):
+    for chunk in chunks_src:
+        os.remove(chunk)
+    os.rmdir('tmp_chunks')
+
+# Соединяем распознанный по частям текст
+
+def combine_text(text_array):
+    result_text = ''
+    for text in text_array:
+        result_text += text + ' '
+    return result_text
+
+
+# ### Распознавание речи
+
+# Библиотека SpeechRecognition ( https://pypi.org/project/SpeechRecognition/ )
+# 
+# Используется распознавание при помощи Google Speech Recognition
+# 
+# Распознавание текста происходит непрерывно, даже когда речи нет, а есть только шум. Если распознать какие-то слова не удается, программа выдает ошибку. Поэтому нужно делить аудио на короткие части и распознавать их отдельно.
+# 
+# Список языковых кодов для Google Speech Recognition: https://www.science.co.il/language/Locale-codes.php
+
+
+# Распознавание без учета шума
+
+def recognize(audio_src):
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src, 3000)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        with a as source:
+            audio = r.record(source)
+        try:
+            text_array.append(r.recognize_google(audio, language='ru'))
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_chunks(chunks_src)
+    
+    return text
+
+# Распознавание с учетом шума: уровень шума определяется автоматически
+
+def recognize_with_noise(audio_src):
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src, 3000)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        with a as source:
+            r.adjust_for_ambient_noise(source) # учитываем шум
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            #print(text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_chunks(chunks_src)
+    
+    return text
+
+# итоговая функция распознавания
+
+def wav_to_txt(path):
+    r = sr.Recognizer()
+    recognize_with_noise(path)
+    
+# для интеграции в main
+
+parser = argparse.ArgumentParser(description='wav_to_txt')
+parser.add_argument('wav_path', help='Path to .wav audio file')
+parser.add_argument('out_path', help='Path to output text file')
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    txt = wav_to_txt(args.wav_path)
+    
+    f = open(args.out_path, ""a"")
+    f.write(txt) 
+    f.close() 
+
+
+;
+# -*- coding: utf-8 -*-
+
+from test import Hello
+import argparse
+import sys
+import socket
+from TextFromPicture import Pic2Txt
+import FFMPEGFrames
+import glob
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    error_msg = ""Invalid Arguments\n\n"" \
+                ""Commands: \n"" \
+                ""  -t, --test                 Let's test it!\n"" \
+                ""       Optional: --name='your_arg'  -   that'll print your string your_arg\n"" \
+                ""  -v, --video             Convert video to pictures and then convert to text\n"" \
+                ""       Mandatory: --in_filename='files/video.mp4' --out_filename='output.txt'  --fps='1'-  set input video, output file, frames per second ""
+
+    if len(sys.argv) == 1:
+        print(error_msg)
+
+    elif str(sys.argv[1]) in ['-t', '--test']:
+        parser.add_argument('-t', '--test', action='store_true')
+        parser.add_argument(""--name"", default=socket.gethostname())
+
+        args = parser.parse_args()
+
+        test_class = Hello(args.name)
+        test_class.print_hello()
+    elif str(sys.argv[1]) in ['-v', '--video']:
+        parser.add_argument('-v', '--video', action='store_true')
+        parser.add_argument(""in_filename"", help='Input filename')
+        parser.add_argument('out_filename', help='Output filename')
+        parser.add_argument(""fps"", help='fps')
+        args = vars(parser.parse_args())
+
+        input = args[""in_filename""]
+        output = args[""out_filename""]
+        fps = args[""fps""]
+
+        f = FFMPEGFrames.FFMPEGFrames(""images/"")
+        f.extract_frames(input, fps)
+        Pic2Txt(glob.glob(""images/*.png""), output)
+    else:
+        print(error_msg)
+
+
+if __name__ == '__main__':
+    main()
+
+;
+"
+2,"Integrated video-to-frame module into the main.py
+",4.0,11,6,0.0,0.0,0.0,"import os
+import subprocess
+
+
+class FFMPEGFrames:
+
+    def __init__(self, output):
+        self.output = output
+
+    def extract_frames(self, input, fps):
+        self.output = input.split('/')[-1].split('.')[0]
+
+        if not os.path.exists(self.output):
+            os.makedirs(self.output)
+
+        query = ""ffmpeg -i "" + input + "" -vf fps="" + \
+            str(fps) + "" "" + self.output + ""output%02d.png""
+        response = subprocess.Popen(
+            query, shell=True, stdout=subprocess.PIPE).stdout.read()
+        s = str(response).encode('utf-8')
+
+;
+# -*- coding: utf-8 -*-
+
+from test import Hello
+import argparse
+import sys
+import socket
+from TextFromPicture import Pic2Txt
+import FFMPEGFrames
+import glob
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    error_msg = ""Invalid Arguments\n\n"" \
+                ""Commands: \n"" \
+                ""  -t, --test                 Let's test it!\n"" \
+                ""       Optional: --name='your_arg'  -   that'll print your string your_arg\n"" \
+                ""  -v, --video             Convert video to pictures and then convert to text\n"" \
+                ""       Mandatory: --in_filename='files/video.mp4' --out_filename='output.txt'  --fps='1'-  set input video, output file, frames per second ""
+
+    if len(sys.argv) == 1:
+        print(error_msg)
+
+    elif str(sys.argv[1]) in ['-t', '--test']:
+        parser.add_argument('-t', '--test', action='store_true')
+        parser.add_argument(""--name"", default=socket.gethostname())
+
+        args = parser.parse_args()
+
+        test_class = Hello(args.name)
+        test_class.print_hello()
+    elif str(sys.argv[1]) in ['-v', '--video']:
+        parser.add_argument('-v', '--video', action='store_true')
+        parser.add_argument(""in_filename"", help='Input filename')
+        parser.add_argument('out_filename', help='Output filename')
+        parser.add_argument(""fps"", help='fps')
+        args = vars(parser.parse_args())
+
+        input = args[""in_filename""]
+        output = args[""out_filename""]
+        fps = args[""fps""]
+
+        f = FFMPEGFrames.FFMPEGFrames(""images/"")
+        f.extract_frames(input, fps)
+        Pic2Txt(glob.glob(""images/*.png""), output)
+    else:
+        print(error_msg)
+
+
+if __name__ == '__main__':
+    main()
+
+;
+","import os
+import subprocess
+
+class FFMPEGFrames:
+    def __init__(self, output):
+        self.output = output
+
+    def extract_frames(self, input, fps):
+        output = input.split('/')[-1].split('.')[0]
+
+        if not os.path.exists(self.output):
+            os.makedirs(self.output)
+
+        query = ""ffmpeg -i "" + input + "" -vf fps="" + str(fps) + "" "" + self.output + ""output%02d.png""
+        response = subprocess.Popen(query, shell=True, stdout=subprocess.PIPE).stdout.read()
+        s = str(response).encode('utf-8')
+
+;
+# -*- coding: utf-8 -*-
+
+from test import Hello
+import argparse
+import sys
+import socket
+from TextFromPicture import Pic2Txt
+import FFMPEGFrames
+import glob
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    error_msg = ""Invalid Arguments\n\n"" \
+                ""Commands: \n"" \
+                ""  -t, --test                 Let's test it!\n"" \
+                ""       Optional: --name='your_arg'  -   that'll print your string your_arg\n"" \
+                ""  -v, --video             Convert video to pictures and then convert to text\n"" \
+                ""       Mandatory: --in_filename='files/video.mp4' --out_filename='output.txt'  --fps='1'-  set input video, output file, frames per second ""
+
+
+    if len(sys.argv) == 1:
+        print(error_msg)
+
+    elif str(sys.argv[1]) in ['-t', '--test']:
+        parser.add_argument('-t', '--test', action='store_true')
+        parser.add_argument(""--name"", default=socket.gethostname())
+
+        args = parser.parse_args()
+
+        test_class = Hello(args.name)
+        test_class.print_hello()
+    elif str(sys.argv[1]) in ['-v', '--video']:
+        parser.add_argument('-v', '--video', action='store_true')
+        parser.add_argument(""in_filename"", help='Input filename')
+        parser.add_argument('out_filename', help='Output filename')
+        parser.add_argument(""fps"", help='fps')
+        args = vars(parser.parse_args())
+
+        input = args[""in_filename""]
+        output = args[""out_filename""]
+        fps = args[""fps""]
+
+        f = FFMPEGFrames.FFMPEGFrames(""images/"")
+        f.extract_frames(input, fps)
+        Pic2Txt(glob.glob(""images/*.png""), output)
+    else:
+        print(error_msg)
+
+if __name__ == '__main__':
+    main()
+
+;
+"
+3,"Integrated video-to-frame module into the main.py
+",5.0,41,15,0.0,5.0,1.0,"import os
+import subprocess
+
+class FFMPEGFrames:
+    def __init__(self, output):
+        self.output = output
+
+    def extract_frames(self, input, fps):
+        output = input.split('/')[-1].split('.')[0]
+
+        if not os.path.exists(self.output):
+            os.makedirs(self.output)
+
+        query = ""ffmpeg -i "" + input + "" -vf fps="" + str(fps) + "" "" + self.output + ""output%02d.png""
+        response = subprocess.Popen(query, shell=True, stdout=subprocess.PIPE).stdout.read()
+        s = str(response).encode('utf-8')
+
+;
+# -*- coding: utf-8 -*-
+
+from test import Hello
+import argparse
+import sys
+import socket
+from TextFromPicture import Pic2Txt
+import FFMPEGFrames
+import glob
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    error_msg = ""Invalid Arguments\n\n"" \
+                ""Commands: \n"" \
+                ""  -t, --test                 Let's test it!\n"" \
+                ""       Optional: --name='your_arg'  -   that'll print your string your_arg\n"" \
+                ""  -v, --video             Convert video to pictures and then convert to text\n"" \
+                ""       Mandatory: --in_filename='files/video.mp4' --out_filename='output.txt'  --fps='1'-  set input video, output file, frames per second ""
+
+
+    if len(sys.argv) == 1:
+        print(error_msg)
+
+    elif str(sys.argv[1]) in ['-t', '--test']:
+        parser.add_argument('-t', '--test', action='store_true')
+        parser.add_argument(""--name"", default=socket.gethostname())
+
+        args = parser.parse_args()
+
+        test_class = Hello(args.name)
+        test_class.print_hello()
+    elif str(sys.argv[1]) in ['-v', '--video']:
+        parser.add_argument('-v', '--video', action='store_true')
+        parser.add_argument(""in_filename"", help='Input filename')
+        parser.add_argument('out_filename', help='Output filename')
+        parser.add_argument(""fps"", help='fps')
+        args = vars(parser.parse_args())
+
+        input = args[""in_filename""]
+        output = args[""out_filename""]
+        fps = args[""fps""]
+
+        f = FFMPEGFrames.FFMPEGFrames(""images/"")
+        f.extract_frames(input, fps)
+        Pic2Txt(glob.glob(""images/*.png""), output)
+    else:
+        print(error_msg)
+
+if __name__ == '__main__':
+    main()
+
+;
+","#!/usr/bin/env python
+from __future__ import unicode_literals, print_function
+import argparse
+import ffmpeg
+import sys
+
+
+parser = argparse.ArgumentParser(description='Generate video thumbnail')
+parser.add_argument('in_filename', help='Input filename')
+parser.add_argument('out_filename', help='Output filename')
+parser.add_argument(
+    '--time', type=int, default=0.1, help='Time offset')
+parser.add_argument(
+    '--width', type=int, default=120,
+    help='Width of output thumbnail (height automatically determined by aspect ratio)')
+
+
+def generate_thumbnail(in_filename, out_filename, time, width):
+    try:
+        (
+            ffmpeg
+            .input(in_filename, ss=time)
+            .filter('scale', width, -1)
+            .output(out_filename, vframes=1)
+            .overwrite_output()
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+    except ffmpeg.Error as e:
+        print(e.stderr.decode(), file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    generate_thumbnail(args.in_filename, args.out_filename, args.time, args.width)
+;
+# -*- coding: utf-8 -*-
+
+from test import Hello
+import argparse
+import sys
+import socket
+from  TextFromPicture import Pic2Txt
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    error_msg = ""Invalid Arguments\n\n"" \
+                ""Commands: \n"" \
+                ""  -t, --test                 Let's test it!\n"" \
+                ""       Optional: --name='your_arg'  -   that'll print your string your_arg\n"" \
+                ""  -p, --pictures             Convert pictures to text\n"" \
+                ""       Mandatory: --in_filenames='img1.jpg(optional:,img2.(format))' --out_filename='output.txt'  -  set input image(s) and output file ""
+
+
+    if len(sys.argv) == 1:
+        print(error_msg)
+
+    elif str(sys.argv[1]) in ['-t', '--test']:
+        parser.add_argument('-t', '--test', action='store_true')
+        parser.add_argument(""--name"", default=socket.gethostname())
+
+        args = parser.parse_args()
+
+        test_class = Hello(args.name)
+        test_class.print_hello()
+    elif str(sys.argv[1]) in ['-p', '--pictures']:
+        parser.add_argument('-p', '--pictures', action='store_true')
+        parser.add_argument('in_filenames', help='Input filenames')
+        parser.add_argument('out_filename', help='Output filename')
+
+        args = parser.parse_args()
+
+        Pic2Txt(args.in_filenames.split(','), args.out_filename)
+        
+    else:
+        print(error_msg)
+
+
+if __name__ == '__main__':
+    main()
+
+;
+"
+4,Update SpeechRecognition_mp3_to_text.py,1.0,12,4,0.0,0.0,0.0,"# coding: utf-8
+
+# ### Функции пред- и постобработки
+
+from pydub import AudioSegment
+from pydub.utils import make_chunks
+import os
+
+import speech_recognition as sr
+
+# Перевод из формата mp3 в wav
+
+def mp3_to_wav(mp3_src, wav_src):
+    sound = AudioSegment.from_mp3(mp3_src)
+    sound.export(wav_src, format=""wav"")
+
+# Делим аудио (wav) на короткие части, сохраняем в папку tmp_chunks
+
+def divide_audio(audio_src, chunk_length_ms):
+    audio = AudioSegment.from_file(audio_src, ""wav"") 
+    chunks = make_chunks(audio, chunk_length_ms)
+    
+    path = ""tmp_chunks""
+    os.mkdir(path)
+    
+    chunks_src = []
+    for i, chunk in enumerate(chunks):
+        chunk_name = ""tmp_chunks\chunk{0}.wav"".format(i)
+        chunks_src.append(chunk_name)
+        chunk.export(chunk_name, format=""wav"")
+        
+    return chunks_src
+
+
+# Удаляем папку tmp_chunks с частями аудио
+
+def delete_tmp_chunks(chunks_src):
+    for chunk in chunks_src:
+        os.remove(chunk)
+    os.rmdir('tmp_chunks')
+
+# Соединяем распознанный по частям текст
+
+def combine_text(text_array):
+    result_text = ''
+    for text in text_array:
+        result_text += text + ' '
+    return result_text
+
+
+# ### Распознавание речи
+
+# Библиотека SpeechRecognition ( https://pypi.org/project/SpeechRecognition/ )
+# 
+# Используется распознавание при помощи Google Speech Recognition
+# 
+# Распознавание текста происходит непрерывно, даже когда речи нет, а есть только шум. Если распознать какие-то слова не удается, программа выдает ошибку. Поэтому нужно делить аудио на короткие части и распознавать их отдельно.
+# 
+# Список языковых кодов для Google Speech Recognition: https://www.science.co.il/language/Locale-codes.php
+
+
+# Распознавание без учета шума
+
+def recognize(audio_src):
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src, 3000)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        with a as source:
+            audio = r.record(source)
+        try:
+            text_array.append(r.recognize_google(audio, language='ru'))
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_chunks(chunks_src)
+    
+    return text
+
+# Распознавание с учетом шума: уровень шума определяется автоматически
+
+def recognize_with_noise(audio_src):
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src, 3000)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        with a as source:
+            r.adjust_for_ambient_noise(source) # учитываем шум
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            #print(text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_chunks(chunks_src)
+    
+    return text
+
+# итоговая функция распознавания
+
+def wav_to_txt(path):
+    r = sr.Recognizer()
+    recognize_with_noise(path)
+    
+# для интеграции в main
+
+parser = argparse.ArgumentParser(description='wav_to_txt')
+parser.add_argument('wav_path', help='Path to .wav audio file')
+parser.add_argument('out_path', help='Path to output text file')
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    txt = wav_to_txt(args.wav_path)
+    
+    f = open(args.out_path, ""a"")
+    f.write(txt) 
+    f.close() 
+
+
+;
+","# coding: utf-8
+
+# ### Функции пред- и постобработки
+
+from pydub import AudioSegment
+from pydub.utils import make_chunks
+import os
+
+import speech_recognition as sr
+
+# Перевод из формата mp3 в wav
+
+def mp3_to_wav(mp3_src, wav_src):
+    sound = AudioSegment.from_mp3(mp3_src)
+    sound.export(wav_src, format=""wav"")
+
+# mp3_to_wav('audio\grob.mp3', 'audio\grob.wav')
+
+
+# Делим аудио (wav) на короткие части, сохраняем в папку tmp_chunks
+
+def divide_audio(audio_src, chunk_length_ms):
+    audio = AudioSegment.from_file(audio_src, ""wav"") 
+    chunks = make_chunks(audio, chunk_length_ms)
+    
+    path = ""tmp_chunks""
+    os.mkdir(path)
+    
+    chunks_src = []
+    for i, chunk in enumerate(chunks):
+        chunk_name = ""tmp_chunks\chunk{0}.wav"".format(i)
+        chunks_src.append(chunk_name)
+        chunk.export(chunk_name, format=""wav"")
+        
+    return chunks_src
+
+
+# Удаляем папку tmp_chunks с частями аудио
+
+def delete_tmp_chunks(chunks_src):
+    for chunk in chunks_src:
+        os.remove(chunk)
+    os.rmdir('tmp_chunks')
+
+# Соединяем распознанный по частям текст
+
+def combine_text(text_array):
+    result_text = ''
+    for text in text_array:
+        result_text += text + ' '
+    return result_text
+
+
+# ### Распознавание речи
+
+# Библиотека SpeechRecognition ( https://pypi.org/project/SpeechRecognition/ )
+# 
+# Используется распознавание при помощи Google Speech Recognition
+# 
+# Распознавание текста происходит непрерывно, даже когда речи нет, а есть только шум. Если распознать какие-то слова не удается, программа выдает ошибку. Поэтому нужно делить аудио на короткие части и распознавать их отдельно.
+# 
+# Список языковых кодов для Google Speech Recognition: https://www.science.co.il/language/Locale-codes.php
+
+
+# Распознавание без учета шума
+
+def recognize(audio_src):
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src, 3000)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        with a as source:
+            audio = r.record(source)
+        try:
+            text_array.append(r.recognize_google(audio, language='ru'))
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_chunks(chunks_src)
+    
+    return text
+
+
+#print(recognize('audio/vsyo_idet_po_planu.wav'))
+
+
+# Распознавание с учетом шума: уровень шума определяется автоматически
+
+def recognize_with_noise(audio_src):
+    # делим аудио на части
+    chunks_src = divide_audio(audio_src, 3000)
+    # распознаем каждую часть
+    text_array = []
+    for chunk_src in chunks_src:
+        a = sr.AudioFile(chunk_src)
+        #print('analyzing ', chunk_src)
+        with a as source:
+            r.adjust_for_ambient_noise(source) # учитываем шум
+            audio = r.record(source)
+        try:
+            text_chunk = r.recognize_google(audio, language='ru')
+            text_array.append(text_chunk)
+            #print(text_chunk)
+        except:
+            pass
+    # объединяем распознанные тексты
+    text = combine_text(text_array)
+    # удаляем ненужные файлы
+    delete_tmp_chunks(chunks_src)
+    
+    return text
+
+#print(recognize_with_noise('audio/vsyo_idet_po_planu.wav'))
+
+# итоговая функция распознавания
+
+def mp3_to_txt():
+
+    r = sr.Recognizer()
+    mp3_to_wav('audio/grob.mp3', 'audio/grob.wav')
+    recognize_with_noise('audio/grob.wav')
+
+;
+"
