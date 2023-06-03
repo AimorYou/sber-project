@@ -1,3 +1,8 @@
+"""
+Данный модуль хранит в себе реализации основных моделей для классификации коммитов.
+
+Модели делятся на 2 вида: на основе градиентного бустинга, и на основе нейронных сетей.
+"""
 import os
 import re
 import nltk
@@ -28,9 +33,9 @@ from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 
 def show_metrics(y_pred: np.ndarray, y_true: np.ndarray) -> None:
     """
-    Метод для отображения метрик
-    :param y_pred: предсказанные значения
-    :param y_true: реальные значения
+    Метод для отображения метрик: accuracy, f1_score, roc_auc, precision, recall, f2_ccore.
+    :param y_pred: Предсказанные значения.
+    :param y_true: Реальные значения.
     """
     print('Train:')
     print('    Accuracy:', round(accuracy_score(y_pred, y_true), 3))
@@ -43,7 +48,16 @@ def show_metrics(y_pred: np.ndarray, y_true: np.ndarray) -> None:
 
 
 class SimpleCatboostClassificator:
+    """
+    Самый простой классификатор использует только числовые данные о коммите и закодированное с помощью
+    TF-IDF/Bag of Words сообщение коммита.
+    """
     def __init__(self, is_bow=False):
+        """
+        Функция инициализирующая параметры модели.
+        :param is_bow: Если True, то показывает, что для векторизации токенов будет использоваться BoW, а если False,
+        то TF-IDF.
+        """
         self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
         self.clf = CatBoostClassifier()
         self.path = os.path.dirname(sber_commit_classification.__file__)
@@ -58,6 +72,10 @@ class SimpleCatboostClassificator:
 
     @staticmethod
     def __check_data(data: pd.DataFrame):
+        """
+        Метод для проверки данных. Проверяет наличие нужных столбцов и содержимое столбца "targets".
+        :param data: DataFrame с данными о коммитах.
+        """
         if type(data) == "<class 'pandas.core.frame.DataFrame'>":
             raise AttributeError(f"A pandas.core.frame.DataFrame was expected but a {type(data)} was received")
         columns_set = {'commit_message',
@@ -70,14 +88,19 @@ class SimpleCatboostClassificator:
             raise KeyError(f"data's columns must contain only {list(columns_set)}")
 
     def __prepare_data(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для приведения данных в приемлемый для модели вид (векторизация текста).
+        :param data: DataFrame с данными о коммитах.
+        :return: Массив с векторизованными данными о коммитах.
+        """
         enc_commit_mes = self.encode_text(data)
         return np.hstack([data.drop(columns=['commit_message']).values, enc_commit_mes])
 
     def my_tokenizer(self, text: str) -> List[str]:
         """
         Метод для разбиения текста на токены.
-        :param text: Текст для токенизации
-        :return: Список токенов
+        :param text: Текст для токенизации.
+        :return: Список токенов.
         """
         def is_good(word: str) -> bool:
             if re.fullmatch('[^' + punctuation + ']+', word):
@@ -93,14 +116,9 @@ class SimpleCatboostClassificator:
 
     def encode_text(self, data: pd.DataFrame) -> np.ndarray:
         """
-        Метод для кодирования токенов в текст
-        params:
-            daya - DataFrame с данными
-            tokenizer - токенайзер
-            is_BoW - bool флаг для определения типа векторизатора
-        returns:
-            mes_train - закодированные commit message в train
-            mes_val - закодированные commit message в val
+        Метод для кодирования токенов в текст.
+        :param data: DataFrame с данными о коммитах.
+        :return: Массив с векторными представлениями сообщений коммита.
         """
         tokenizer = self.my_tokenizer
         if self.is_bow:
@@ -115,18 +133,37 @@ class SimpleCatboostClassificator:
         return encode_message
 
     def predict(self, x_data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для предсказания значимости коммита.
+        :param x_data: DataFrame с данными о коммитах.
+        :return: Массив с метками коммитов(0 - незначимый, 1 - значимый).
+        """
         SimpleCatboostClassificator.__check_data(x_data)
         prep_data = self.__prepare_data(x_data)
         return self.clf.predict(prep_data)
 
     def predict_proba(self, x_data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для предсказания вероятности значимости коммита.
+        :param x_data: DataFrame с данными о коммитах.
+        :return: Массив с вероятностями значимости коммитов.
+        """
         SimpleCatboostClassificator.__check_data(x_data)
         prep_data = self.__prepare_data(x_data)
         return self.clf.predict_proba(prep_data)
 
 
 class CatboostWithCodeEncoding:
+    """
+    Классификатор использующий числовые данные о коммите и закодированное с помощью
+    нейронных сетей сообщения коммитов и код программы до и после изменения.
+    """
     def __init__(self, is_svd: bool = True, device: str = 'cpu'):
+        """
+        Метод инициализации параметров модели.
+        :param is_svd: Если True, то применяется метод уменьшения размерности SVD, в противном случае применяется PCA.
+        :param device: Устройство на котором будут работать нейронные сети для кодирования кода и текста.
+        """
         self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
         self.unixcoder = UniXcoder("microsoft/unixcoder-base").to(device)
         self.roberta = RobertaModel.from_pretrained("roberta-base").to(device)
@@ -145,6 +182,11 @@ class CatboostWithCodeEncoding:
 
     @staticmethod
     def __check_data(data: pd.DataFrame):
+        """
+        Метод для проверки данных. Проверяет наличие нужных столбцов и содержимое столбца "targets".
+        :param data: DataFrame с данными о коммитах.
+        """
+
         if type(data) == "<class 'pandas.core.frame.DataFrame'>":
             raise AttributeError(f"A pandas.core.frame.DataFrame was expected but a {type(data)} was received")
         columns_set = {'commit_message',
@@ -159,12 +201,22 @@ class CatboostWithCodeEncoding:
             raise KeyError(f"data's columns must contain only {list(columns_set)}")
 
     def __prepare_data(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для приведения данных в приемлемый для модели вид (векторизация текста).
+        :param data: DataFrame с данными о коммитах.
+        :return: Массив с векторизованными данными о коммитах.
+        """
         enc_mes = self.mes_enc(data)
         enc_code = self.code_enc(data)
         new_data = np.hstack([data.drop(columns=['commit_message', 'file_new', 'file_past']).values, enc_mes, enc_code])
         return self.decomposition.transform(new_data)
 
     def code_enc(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для кодирования кода программы.
+        :param data: DataFrame с данными о коммите.
+        :return: Массив закодированных кодов программ до и после.
+        """
         res = []
         for i in range(len(data)):
             curr = data.iloc[i]['file_new']
@@ -182,6 +234,11 @@ class CatboostWithCodeEncoding:
         return torch.cat(res, dim=0).to('cpu').detach().numpy()
 
     def mes_enc(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для кодирования сообщения коммита.
+        :param data: DataFrame с данными о коммите.
+        :return: Массив закодированных сообщений коммита.
+        """
         res = []
         for i in range(len(data)):
             sent = str(data.iloc[i]['commit_message'])
@@ -206,42 +263,81 @@ class CatboostWithCodeEncoding:
         return np.vstack(res)
 
     def predict(self, x_data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для предсказания значимости коммита.
+        :param x_data: DataFrame с данными о коммитах.
+        :return: Массив с метками коммитов(0 - незначимый, 1 - значимый).
+        """
         CatboostWithCodeEncoding.__check_data(x_data)
         prep_data = self.__prepare_data(x_data)
         return self.clf.predict(prep_data)
 
     def predict_proba(self, x_data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для предсказания вероятности значимости коммита.
+        :param x_data: DataFrame с данными о коммитах.
+        :return: Массив с вероятностями значимости коммитов.
+        """
         CatboostWithCodeEncoding.__check_data(x_data)
         prep_data = self.__prepare_data(x_data)
         return self.clf.predict_proba(prep_data)
 
 
 class SimpleCommitDataset(Dataset):
+    """
+    Класс датасета для хранения и выдачи информации для модели SimpleSberNet.
+    """
     def __init__(self, x: np.ndarray, y: np.ndarray, device: str = 'cpu'):
+        """
+        Метод инициализации параметров датасета.
+        :param x: Признаки коммита.
+        :param y: Целевая переменная.
+        :param device: Устройство на котором должны находиться тензоры.
+        """
         self.x = x
         self.y = y
         self.device = device
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Метод выдающий данные о признаках и целевой метке коммита под индексом idx.
+        :param idx: Индекс коммита.
+        :return: Тензор признаков, и тензор целевой метки.
+        """
         return torch.tensor(self.x[idx], device=self.device, dtype=torch.float),\
             torch.tensor(self.y[idx], device=self.device, dtype=torch.float)
 
     def __len__(self) -> int:
+        """
+        Метод для возвращения длинны датасета.
+        :return: Количество коммитов в датасете.
+        """
         return len(self.x)
 
 
 class SimpleSberNet(nn.Module):
+    """
+    Класс нейронной сети.
+    """
     def __init__(self):
+        """
+        Класс для инициализации основных слоёв сети.
+        """
         super().__init__()
         self.bn0 = nn.BatchNorm1d(2310)
-        self.fc1 = nn.Linear(2310, 128, bias=True)
-        self.bn1 = nn.BatchNorm1d(128)
+        self.fc1 = nn.Linear(2310, 256, bias=True)
+        self.bn1 = nn.BatchNorm1d(256)
         self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(128, 16, bias=True)
-        self.bn2 = nn.BatchNorm1d(16)
-        self.classifier = nn.Linear(16, 1, bias=True)
+        self.fc2 = nn.Linear(256, 32, bias=True)
+        self.bn2 = nn.BatchNorm1d(32)
+        self.classifier = nn.Linear(32, 1, bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Метод для предсказания.
+        :param x: Тензор признаков коммитов.
+        :return: Предсказание вероятности значимости коммита.
+        """
         return self.classifier(
             self.relu(
                 self.bn2(
@@ -259,9 +355,22 @@ class SimpleSberNet(nn.Module):
         )
 
 
-class SimpleNNCommitClassifier(pl.LightningModule):
+class SimpleSberModule(pl.LightningModule):
+    """
+    Класс для обучения модели SimpleSberNet.
+    """
     def __init__(self, loss_func: nn.Module = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([3])),
                  lr_func=None, is_pretrained: bool = False, device: str = 'cpu', *args, **kwargs):
+        """
+        Метод инициализации параметров объекта класса.
+        :param loss_func: Функция потерь.
+        :param lr_func: Функция уменьшения шага обучения.
+        :param is_pretrained: Если True, то можно будет применять предобученную модель, в противном случае модель
+        будет новая.
+        :param device: Устройство на котором будет работать нейронная сеть.
+        :param args: -
+        :param kwargs: -
+        """
         super().__init__(*args, **kwargs)
 
         self.dev = device
@@ -290,22 +399,44 @@ class SimpleNNCommitClassifier(pl.LightningModule):
             self.clf.load_state_dict(torch.load(self.path + "\\models\\SimpleSberNet.pth"))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Метод для предсказания.
+        :param x: Тензор признаков коммитов.
+        :return: Предсказание вероятности значимости коммита.
+        """
         return self.clf(x)
 
     def predict(self, x_data: pd.DataFrame) -> np.ndarray:
-        SimpleNNCommitClassifier.__check_data(x_data)
+        """
+        Метод для предсказания значимости коммита.
+        :param x_data: DataFrame с данными о коммитах.
+        :return: Массив с вероятностью значимости коммита.
+        """
+        SimpleSberModule.__check_data(x_data)
         prep_data = self.__prepare_data(x_data)
         ans = self.clf(torch.tensor(prep_data, dtype=torch.float32, device=self.dev)).to('cpu').detach().numpy()
-        return np.argmax(ans, axis=1)
+        return ans
 
     def fit(self, train_x: pd.DataFrame, train_y: np.ndarray,
             val_x: pd.DataFrame, val_y: np.ndarray,
             optimizer: torch.optim.Optimizer,
             accelerator: str = 'cpu', max_epochs: int = 20,
             batch_size: int = 32) -> Tuple[DataLoader, DataLoader]:
+        """
+        Метод для обучения модели.
+        :param train_x: Тренировочные признаки коммитов.
+        :param train_y: Тренировочные целевые метки коммитов.
+        :param val_x: Валидационные признаки коммитов.
+        :param val_y: Валидационные целевые метки коммитов
+        :param optimizer: Оптимизатор градиентного спуска.
+        :param accelerator: Устройство, на котором будет происходить обучение.
+        :param max_epochs: Количество эпох обучения.
+        :param batch_size: Размер batch.
+        :return: Тренировочный и валидационный dataloader.
+        """
 
-        SimpleNNCommitClassifier.__check_data(train_x)
-        SimpleNNCommitClassifier.__check_data(val_x)
+        SimpleSberModule.__check_data(train_x)
+        SimpleSberModule.__check_data(val_x)
         if {0, 1} != set(train_y): raise AttributeError("train_y must contain only 0 or 1")
         if {0, 1} != set(val_y): raise AttributeError("val_y must contain only 0 or 1")
 
@@ -334,6 +465,11 @@ class SimpleNNCommitClassifier(pl.LightningModule):
         return train_dataloader, val_dataloader
 
     def code_enc(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для кодирования кода программы.
+        :param data: DataFrame с данными о коммите.
+        :return: Массив закодированных кодов программ до и после.
+        """
         res = []
         for i in range(len(data)):
             curr = data.iloc[i]['file_new']
@@ -351,6 +487,11 @@ class SimpleNNCommitClassifier(pl.LightningModule):
         return torch.cat(res, dim=0).to('cpu').detach().numpy()
 
     def mes_enc(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для кодирования сообщения коммита.
+        :param data: DataFrame с данными о коммите.
+        :return: Массив закодированных сообщений коммита.
+        """
         res = []
         for i in range(len(data)):
             sent = str(data.iloc[i]['commit_message'])
@@ -376,6 +517,10 @@ class SimpleNNCommitClassifier(pl.LightningModule):
 
     def configure_optimizers(self) -> Union[torch.optim.Optimizer, Tuple[List[torch.optim.Optimizer],
                                                                          List[torch.optim.lr_scheduler.LambdaLR]]]:
+        """
+        Метод для возврата оптимизатора.
+        :return: Оптимизатор.
+        """
         if self.lr_func is None:
             return self.optim
         else:
@@ -383,6 +528,12 @@ class SimpleNNCommitClassifier(pl.LightningModule):
             return [self.optim], [scheduler]
 
     def training_step(self, train_batch: tuple, batch_idx: int) -> torch.Tensor:
+        """
+        Метод одной итерации шага обучения.
+        :param train_batch: Batch.
+        :param batch_idx: Индекс batch.
+        :return: Ошибку
+        """
         data, targets = train_batch
 
         preds = self.clf(data).view(-1)
@@ -394,6 +545,12 @@ class SimpleNNCommitClassifier(pl.LightningModule):
         return loss
 
     def validation_step(self, val_batch: tuple, batch_idx: int):
+        """
+        Метод одной итерации шага валидации.
+        :param val_batch: Batch.
+        :param batch_idx: Индекс batch.
+        :return: Ошибку
+        """
         data, targets = val_batch
 
         preds = self.clf(data).view(-1)
@@ -405,6 +562,10 @@ class SimpleNNCommitClassifier(pl.LightningModule):
 
     @staticmethod
     def __check_data(data: pd.DataFrame):
+        """
+        Метод для проверки данных. Проверяет наличие нужных столбцов и содержимое столбца "targets".
+        :param data: DataFrame с данными о коммитах.
+        """
         if type(data) == "<class 'pandas.core.frame.DataFrame'>":
             raise AttributeError(f"A pandas.core.frame.DataFrame was expected but a {type(data)} was received")
         columns_set = {'commit_message',
@@ -419,17 +580,34 @@ class SimpleNNCommitClassifier(pl.LightningModule):
             raise KeyError(f"data's columns must contain only {list(columns_set)}")
 
     def __prepare_data(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Метод для приведения данных в приемлемый для модели вид (векторизация текста).
+        :param data: DataFrame с данными о коммитах.
+        :return: Массив с векторизованными данными о коммитах.
+        """
         enc_mes = self.mes_enc(data)
         enc_code = self.code_enc(data)
         new_data = np.hstack([data.drop(columns=['commit_message', 'file_new', 'file_past']).values, enc_mes, enc_code])
         return new_data
 
 
-class MiddleCommitDataset(Dataset):
+class StrongCommitDataset(Dataset):
+    """
+    Класс датасета для хранения и выдачи информации о коммите для модели StrongSberNet.
+    """
     def __init__(self, x: pd.DataFrame, y: np.ndarray,
                  tokenizer: transformers.models.roberta.tokenization_roberta.RobertaTokenizer,
                  mess_model: nn.Module, code_model: nn.Module,
                  max_len: int = 64):
+        """
+        Метод инициализации датасета.
+        :param x: Признаки коммитов.
+        :param y: Целевые метки коммитов.
+        :param tokenizer: Токенизатор для сообщения коммита.
+        :param mess_model: Модель для кодирования сообщения коммита.
+        :param code_model: Модель для кодирования кода до и после изменения.
+        :param max_len: Максимальная длинна эмбединга скрытого представления Encoder слоя модели.
+        """
         self.x = x
         self.y = y
         self.tokenizer = tokenizer
@@ -438,6 +616,11 @@ class MiddleCommitDataset(Dataset):
         self.max_len = max_len
 
     def __getitem__(self, idx: int):
+        """
+        Метод выдающий данные о признаках и целевой метке коммита под индексом idx.
+        :param idx: Индекс коммита.
+        :return: Тензор признаков, и тензор целевой метки.
+        """
         sent = str(self.x['commit_message'][idx])
         inputs = self.tokenizer.encode_plus(
             sent,
@@ -469,11 +652,23 @@ class MiddleCommitDataset(Dataset):
         return dct
 
     def __len__(self):
+        """
+        Метод для возвращения длинны датасета.
+        :return: Количество коммитов в датасете.
+        """
         return len(self.x)
 
 
-class MiddleSberNet(nn.Module):
+class StrongSberNet(nn.Module):
+    """
+
+    """
     def __init__(self, is_full: bool):
+        """
+        Класс нейронной сети
+        :param is_full: Если True, то будут обучаться все модели, которые участвуют в кодировании кода и сообщений
+        коммита, в противном случае, только часть данных моделей
+        """
         super().__init__()
 
         self.bn1 = nn.BatchNorm1d(128)
@@ -498,6 +693,11 @@ class MiddleSberNet(nn.Module):
             self.fc1 = nn.Linear(2310, 128, bias=True)
 
     def forward(self, x: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Метод для предсказания.
+        :param x: Словарь признаков коммитов.
+        :return: Предсказание вероятности значимости коммита.
+        """
         mess_vec = self.mess_model(input_ids=x['inputs']['input_ids'],
                                    attention_mask=x['inputs']['attention_mask'],
                                    token_type_ids=x['inputs']["token_type_ids"]
@@ -524,9 +724,22 @@ class MiddleSberNet(nn.Module):
         )
 
 
-class MiddleNNCommitClassifier(pl.LightningModule):
+class StrongSberModule(pl.LightningModule):
+    """
+    Класс для обучения модели StrongSberNet.
+    """
     def __init__(self, loss_func: nn.Module = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([2])),
                  lr_func=None, is_full: bool = False, device: str = 'cpu', *args, **kwargs):
+        """
+        Класс инициализации.
+        :param loss_func: Функция потерь.
+        :param lr_func: Функция уменьшения шага обучения.
+        :param is_full: Если True, то будут обучаться все модели, которые участвуют в кодировании кода и сообщений
+        коммита, в противном случае, только часть данных моделей.
+        :param device: Устройство, на котором будет работать модель.
+        :param args: -
+        :param kwargs: -
+        """
         super().__init__(*args, **kwargs)
 
         self.dev = device
@@ -544,9 +757,14 @@ class MiddleNNCommitClassifier(pl.LightningModule):
         self.f1 = tm.F1Score(task='binary').to(device)
         self.roc_auc = tm.AUROC(task='binary').to(device)
 
-        self.clf = MiddleSberNet(is_full).to(device)
+        self.clf = StrongSberNet(is_full).to(device)
 
     def forward(self, x: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Метод для предсказания.
+        :param x: Словарь признаков коммитов.
+        :return: Предсказание вероятности значимости коммита.
+        """
         return self.clf(x)
 
     def fit(self, train_x: pd.DataFrame, train_y: np.ndarray,
@@ -554,21 +772,34 @@ class MiddleNNCommitClassifier(pl.LightningModule):
             optimizer: torch.optim.Optimizer,
             accelerator: str = 'cpu', max_epochs: int = 20,
             batch_size: int = 4, max_len: int = 64) -> Tuple[DataLoader, DataLoader]:
-        MiddleNNCommitClassifier.__check_data(train_x)
-        MiddleNNCommitClassifier.__check_data(val_x)
+        """
+        Метод для обучения модели StrongSberNet.
+        :param train_x: Тренировочные признаки коммитов.
+        :param train_y: Тренировочные целевые метки коммитов.
+        :param val_x: Валидационные признаки коммитов.
+        :param val_y: Валидационные целевые метки коммитов
+        :param optimizer: Оптимизатор градиентного спуска.
+        :param accelerator: Устройство, на котором будет происходить обучение.
+        :param max_epochs: Количество эпох обучения.
+        :param batch_size: Размер batch.
+        :param max_len: Максимальная длинна массива токенов.
+        :return: Тренировочный и валидационный dataloader.
+        """
+        StrongSberModule.__check_data(train_x)
+        StrongSberModule.__check_data(val_x)
         if {0, 1} != set(train_y): raise AttributeError("train_y must contain only 0 or 1")
         if {0, 1} != set(val_y): raise AttributeError("val_y must contain only 0 or 1")
 
         self.optim = optimizer
 
         # Datasets
-        train_dataset = MiddleCommitDataset(train_x,
+        train_dataset = StrongCommitDataset(train_x,
                                             train_y,
                                             self.tokenizer,
                                             self.clf.mess_model,
                                             self.clf.code_model,
                                             max_len=max_len)
-        val_dataset = MiddleCommitDataset(val_x,
+        val_dataset = StrongCommitDataset(val_x,
                                           val_y,
                                           self.tokenizer,
                                           self.clf.mess_model,
@@ -593,6 +824,10 @@ class MiddleNNCommitClassifier(pl.LightningModule):
 
     def configure_optimizers(self) -> Union[torch.optim.Optimizer, Tuple[List[torch.optim.Optimizer],
                                                                          List[torch.optim.lr_scheduler.LambdaLR]]]:
+        """
+        Метод для возврата оптимизатора.
+        :return: Оптимизатор.
+        """
         if self.lr_func is None:
             return self.optim
         else:
@@ -600,6 +835,12 @@ class MiddleNNCommitClassifier(pl.LightningModule):
             return [self.optim], [scheduler]
 
     def training_step(self, train_batch: Dict[str, torch.Tensor], batch_idx: int):
+        """
+        Метод одной итерации шага обучения.
+        :param train_batch: Batch.
+        :param batch_idx: Индекс batch.
+        :return: Ошибку
+        """
         dct = train_batch
         targets = dct['targets']
 
@@ -612,6 +853,12 @@ class MiddleNNCommitClassifier(pl.LightningModule):
         return loss
 
     def validation_step(self, val_batch: Dict[str, torch.Tensor], batch_idx: int):
+        """
+        Метод одной итерации шага валидации.
+        :param val_batch: Batch.
+        :param batch_idx: Индекс batch.
+        :return: Ошибку
+        """
         dct = val_batch
         targets = dct['targets']
 
@@ -624,6 +871,10 @@ class MiddleNNCommitClassifier(pl.LightningModule):
 
     @staticmethod
     def __check_data(data: pd.DataFrame):
+        """
+        Метод для проверки данных. Проверяет наличие нужных столбцов и содержимое столбца "targets".
+        :param data: DataFrame с данными о коммитах.
+        """
         if type(data) == "<class 'pandas.core.frame.DataFrame'>":
             raise AttributeError(f"A pandas.core.frame.DataFrame was expected but a {type(data)} was received")
         columns_set = {'commit_message',

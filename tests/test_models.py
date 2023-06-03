@@ -77,8 +77,8 @@ def test_catboost_with_code_encoding_pca():
     assert np.array_equal(np.around(pred_proba, decimals=8), true_pred_proba), 'False predict_proba'
 
 
-def test_simple_nn_commit_classifier():
-    clf = scc.SimpleNNCommitClassifier()
+def test_simple_sber_module():
+    clf = scc.SimpleSberModule()
     optim = torch.optim.Adam(clf.parameters(), lr=0.001)
 
     data = pd.read_csv(os.path.dirname(tests.__file__) + '\\data\\test_fit_data.csv', index_col=0).head(20)
@@ -95,26 +95,26 @@ def test_simple_nn_commit_classifier():
         assert False, str(e)
 
 
-# def test_simple_nn_commit_classifier_pretrained():
-#     clf = scc.SimpleNNCommitClassifier(is_pretrained=True)
-#     optim = torch.optim.Adam(clf.parameters(), lr=0.001)
-#
-#     data = pd.read_csv(os.path.dirname(tests.__file__) + '\\data\\test_fit_data.csv', index_col=0).head(20)
-#     x = data.drop(['target'], axis=1)
-#     y = data['target']
-#     x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, random_state=228, stratify=y)
-#     x_train.reset_index(inplace=True)
-#     x_val.reset_index(inplace=True)
-#     try:
-#         clf.fit(x_train, y_train.values, x_val, y_val.values, optim, max_epochs=1)
-#         clf.predict(x_val)
-#         assert True
-#     except Exception as e:
-#         assert False, str(e)
+def test_simple_sber_module_pretrained():
+    clf = scc.SimpleSberModule(is_pretrained=True)
+    optim = torch.optim.Adam(clf.parameters(), lr=0.001)
+
+    data = pd.read_csv(os.path.dirname(tests.__file__) + '\\data\\test_fit_data.csv', index_col=0).head(20)
+    x = data.drop(['target'], axis=1)
+    y = data['target']
+    x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, random_state=228, stratify=y)
+    x_train.reset_index(inplace=True)
+    x_val.reset_index(inplace=True)
+    try:
+        clf.fit(x_train, y_train.values, x_val, y_val.values, optim, max_epochs=1)
+        clf.predict(x_val)
+        assert True
+    except Exception as e:
+        assert False, str(e)
 
 
-def test_middle_nn_commit_classifier():
-    clf = scc.MiddleNNCommitClassifier()
+def test_strong_sber_module():
+    clf = scc.StrongSberModule()
     optim = torch.optim.Adam(clf.parameters(), lr=0.001)
 
     data = pd.read_csv(os.path.dirname(tests.__file__) + '\\data\\test_fit_data.csv', index_col=0).head(20)
