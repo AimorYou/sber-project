@@ -397,6 +397,7 @@ class SimpleSberModule(pl.LightningModule):
         self.clf = SimpleSberNet().to(device)
         if is_pretrained:
             self.clf.load_state_dict(torch.load(self.path + "\\models\\SimpleSberNet.pth"))
+            self.clf.to(device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -661,7 +662,7 @@ class StrongCommitDataset(Dataset):
 
 class StrongSberNet(nn.Module):
     """
-
+    Класс нейронной сети.
     """
     def __init__(self, is_full: bool):
         """
